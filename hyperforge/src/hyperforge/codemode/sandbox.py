@@ -645,7 +645,9 @@ async def run_sandbox_server(
     active_sessions = 0
     admission_lock = asyncio.Lock()
     max_sessions = settings.sandbox_max_concurrent_sessions
-    handshake_limit = asyncio.Semaphore(max_sessions) if max_sessions is not None else None
+    handshake_limit = (
+        asyncio.Semaphore(max_sessions) if max_sessions is not None else None
+    )
 
     async def handler(rx: asyncio.StreamReader, tx: asyncio.StreamWriter):
         nonlocal active_sessions
