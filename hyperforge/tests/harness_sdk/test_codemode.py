@@ -415,7 +415,7 @@ async def test_scoped_codemode_default_projection_uses_formatted_context() -> No
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "lookup(value='hello')"},
+        {"code": "lookup(value='hello'); output('done')"},
     )
 
     assert runner.results == [("lookup", '{"value":"HELLO"}'), ("output", None)]
@@ -439,7 +439,7 @@ async def test_scoped_codemode_raw_projection_must_be_explicit() -> None:
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "lookup(value='hello')"},
+        {"code": "lookup(value='hello'); output('done')"},
     )
 
     assert runner.results == [
@@ -504,7 +504,7 @@ async def test_scoped_codemode_normalizes_adapter_results_as_strict_json() -> No
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "upper(value='hello')"},
+        {"code": "upper(value='hello'); output('done')"},
     )
 
     assert runner.results == [
@@ -569,6 +569,33 @@ async def test_scoped_codemode_normalizes_output_as_strict_json() -> None:
     )
 
     assert result.value == {"positions": [1, 2], "complete": True}
+
+
+@pytest.mark.asyncio
+async def test_scoped_codemode_requires_output() -> None:
+    scoped = create_codemode_tool(capabilities=(), runner=RecordingRunner([]))
+    harness = AgentHarness(model="test", model_client=UnusedModel())
+
+    with pytest.raises(ValueError, match=r"must call output\(value\) exactly once"):
+        await scoped.execute(
+            ToolCallContext(harness=harness, name=scoped.name),
+            {"code": "pass"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_codemode_rejects_repeated_output() -> None:
+    runner = RecordingRunner(
+        [worker_task("output", "first"), worker_task("output", "second")]
+    )
+    scoped = create_codemode_tool(capabilities=(), runner=runner)
+    harness = AgentHarness(model="test", model_client=UnusedModel())
+
+    with pytest.raises(ValueError, match=r"output\(value\) may only be called once"):
+        await scoped.execute(
+            ToolCallContext(harness=harness, name=scoped.name),
+            {"code": "output('first'); output('second')"},
+        )
 
 
 @pytest.mark.asyncio
@@ -653,7 +680,7 @@ async def test_scoped_positional_arguments_follow_advertised_alias_order() -> No
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "aliased('hello')"},
+        {"code": "aliased('hello'); output('done')"},
     )
 
     definition = runner.requests[0].function_names["harness"]["aliased"]
@@ -690,7 +717,9 @@ async def test_scoped_codemode_counts_nested_calls_as_ordinary_usage() -> None:
             HarnessToolCall(
                 id="outer-call",
                 name=scoped.name,
-                arguments={"code": "upper(value='one'); upper(value='two')"},
+                arguments={
+                    "code": "upper(value='one'); upper(value='two'); output('done')"
+                },
             )
         ]
     )
@@ -724,7 +753,7 @@ async def test_scoped_codemode_assigns_unique_nested_call_ids() -> None:
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name, id="outer-call"),
-        {"code": "record_id(value='one'); record_id(value='two')"},
+        {"code": "record_id(value='one'); record_id(value='two'); output('done')"},
     )
 
     assert len(call_ids) == 2
