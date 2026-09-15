@@ -232,7 +232,8 @@ lists and non-JSON or non-finite values are rejected consistently across
 runners. Adapters must not return Pydantic models, including models nested in
 containers, or dictionaries containing the reserved `__model__` key.
 Values passed to scoped `output(...)` use the same normalization and rejection
-rules.
+rules. Generated code must call `output(value)` exactly once; a missing or
+repeated call fails the invocation.
 
 Capability names must be unique ASCII public Python identifiers, cannot use
 reserved worker names, and cannot expose an `agent_id` input field. Scoped Code

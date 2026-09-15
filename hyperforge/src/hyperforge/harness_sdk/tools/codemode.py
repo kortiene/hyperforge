@@ -215,20 +215,29 @@ def create_codemode_tool(
     ) -> CodemodeOutput:
         harness = context.harness
         result = CodemodeOutput()
+        output_calls = 0
+        output_succeeded = False
 
         async def dispatch(task: RestrictedPythonTask) -> Any:
+            nonlocal output_calls, output_succeeded
             if task.function == OUTPUT_FUNCTION_NAME:
+                output_calls += 1
+                if output_calls > 1:
+                    raise ValueError("output(value) may only be called once")
                 if task.args and task.keyword_args:
                     raise ValueError(
                         "output accepts either a positional or keyword value"
                     )
                 if len(task.args) > 1:
                     raise ValueError("output accepts one value")
-                value = task.args[0] if task.args else task.keyword_args.get("value")
+                if not task.args and set(task.keyword_args) != {"value"}:
+                    raise ValueError("output requires exactly one 'value' argument")
+                value = task.args[0] if task.args else task.keyword_args["value"]
                 result.value = _normalize_json_value(
                     value,
                     label="Code Mode output",
                 )
+                output_succeeded = True
                 return None
 
             capability = capability_map.get(task.function)
@@ -286,6 +295,8 @@ def create_codemode_tool(
                 else SandboxRunner.isolated_process(dispatch)
             )
             await sandbox_runner.run(request)
+        if output_calls != 1 or not output_succeeded:
+            raise ValueError("Code Mode must call output(value) exactly once")
         return result
 
     execute.__name__ = name
@@ -326,7 +337,7 @@ def _scoped_description(
 ) -> str:
     introduction = description or (
         "Execute restricted Python code using only the scoped capabilities below; "
-        "call output(value) to return a result."
+        "call output(value) exactly once to return a result."
     )
     if not capabilities:
         return introduction

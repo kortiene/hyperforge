@@ -343,7 +343,9 @@ async def test_scoped_codemode_runs_hidden_capability_in_isolated_process(
 
 @pytest.mark.asyncio
 async def test_scoped_codemode_default_projection_uses_formatted_context() -> None:
-    runner = RecordingRunner([worker_task("lookup", value="hello")])
+    runner = RecordingRunner(
+        [worker_task("lookup", value="hello"), worker_task("output", "done")]
+    )
     scoped = create_codemode_tool(
         capabilities=(CodeModeCapability(lookup),),
         runner=runner,
@@ -352,15 +354,17 @@ async def test_scoped_codemode_default_projection_uses_formatted_context() -> No
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "lookup(value='hello')"},
+        {"code": "lookup(value='hello'); output('done')"},
     )
 
-    assert runner.results == [("lookup", '{"value":"HELLO"}')]
+    assert runner.results == [("lookup", '{"value":"HELLO"}'), ("output", None)]
 
 
 @pytest.mark.asyncio
 async def test_scoped_codemode_raw_projection_must_be_explicit() -> None:
-    runner = RecordingRunner([worker_task("lookup", value="hello")])
+    runner = RecordingRunner(
+        [worker_task("lookup", value="hello"), worker_task("output", "done")]
+    )
     scoped = create_codemode_tool(
         capabilities=(
             CodeModeCapability(
@@ -374,10 +378,13 @@ async def test_scoped_codemode_raw_projection_must_be_explicit() -> None:
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "lookup(value='hello')"},
+        {"code": "lookup(value='hello'); output('done')"},
     )
 
-    assert runner.results == [("lookup", {"value": "HELLO", "secret": "internal"})]
+    assert runner.results == [
+        ("lookup", {"value": "HELLO", "secret": "internal"}),
+        ("output", None),
+    ]
 
 
 @pytest.mark.asyncio
@@ -408,7 +415,9 @@ async def test_scoped_codemode_normalizes_adapter_results_as_strict_json() -> No
     ) -> dict[str, Any]:
         return {"value": output.value, "positions": (1, 2)}
 
-    runner = RecordingRunner([worker_task("upper", value="hello")])
+    runner = RecordingRunner(
+        [worker_task("upper", value="hello"), worker_task("output", "done")]
+    )
     scoped = create_codemode_tool(
         capabilities=(CodeModeCapability(upper, result_adapter=project),),
         runner=runner,
@@ -417,10 +426,13 @@ async def test_scoped_codemode_normalizes_adapter_results_as_strict_json() -> No
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "upper(value='hello')"},
+        {"code": "upper(value='hello'); output('done')"},
     )
 
-    assert runner.results == [("upper", {"value": "HELLO", "positions": [1, 2]})]
+    assert runner.results == [
+        ("upper", {"value": "HELLO", "positions": [1, 2]}),
+        ("output", None),
+    ]
 
 
 @pytest.mark.asyncio
@@ -479,6 +491,33 @@ async def test_scoped_codemode_normalizes_output_as_strict_json() -> None:
     )
 
     assert result.value == {"positions": [1, 2], "complete": True}
+
+
+@pytest.mark.asyncio
+async def test_scoped_codemode_requires_output() -> None:
+    scoped = create_codemode_tool(capabilities=(), runner=RecordingRunner([]))
+    harness = AgentHarness(model="test", model_client=UnusedModel())
+
+    with pytest.raises(ValueError, match=r"must call output\(value\) exactly once"):
+        await scoped.execute(
+            ToolCallContext(harness=harness, name=scoped.name),
+            {"code": "pass"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_codemode_rejects_repeated_output() -> None:
+    runner = RecordingRunner(
+        [worker_task("output", "first"), worker_task("output", "second")]
+    )
+    scoped = create_codemode_tool(capabilities=(), runner=runner)
+    harness = AgentHarness(model="test", model_client=UnusedModel())
+
+    with pytest.raises(ValueError, match=r"output\(value\) may only be called once"):
+        await scoped.execute(
+            ToolCallContext(harness=harness, name=scoped.name),
+            {"code": "output('first'); output('second')"},
+        )
 
 
 @pytest.mark.asyncio
@@ -545,7 +584,9 @@ async def test_scoped_positional_arguments_follow_advertised_alias_order() -> No
     ) -> UpperOutput:
         return UpperOutput(value=input_value.value.upper())
 
-    runner = RecordingRunner([worker_task("aliased", "hello")])
+    runner = RecordingRunner(
+        [worker_task("aliased", "hello"), worker_task("output", "done")]
+    )
     scoped = create_codemode_tool(
         capabilities=(
             CodeModeCapability(
@@ -559,19 +600,26 @@ async def test_scoped_positional_arguments_follow_advertised_alias_order() -> No
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name),
-        {"code": "aliased('hello')"},
+        {"code": "aliased('hello'); output('done')"},
     )
 
     definition = runner.requests[0].function_names["harness"]["aliased"]
     assert list(definition.parameters) == ["public"]
     assert '"public"' in scoped.description
-    assert runner.results == [("aliased", {"value": "HELLO"})]
+    assert runner.results == [
+        ("aliased", {"value": "HELLO"}),
+        ("output", None),
+    ]
 
 
 @pytest.mark.asyncio
 async def test_scoped_codemode_counts_nested_calls_as_ordinary_usage() -> None:
     runner = RecordingRunner(
-        [worker_task("upper", value="one"), worker_task("upper", value="two")]
+        [
+            worker_task("upper", value="one"),
+            worker_task("upper", value="two"),
+            worker_task("output", "done"),
+        ]
     )
     scoped = create_codemode_tool(
         capabilities=(CodeModeCapability(upper),),
@@ -589,7 +637,9 @@ async def test_scoped_codemode_counts_nested_calls_as_ordinary_usage() -> None:
             HarnessToolCall(
                 id="outer-call",
                 name=scoped.name,
-                arguments={"code": "upper(value='one'); upper(value='two')"},
+                arguments={
+                    "code": "upper(value='one'); upper(value='two'); output('done')"
+                },
             )
         ]
     )
@@ -609,7 +659,11 @@ async def test_scoped_codemode_assigns_unique_nested_call_ids() -> None:
         return UpperOutput(value=input_value.value)
 
     runner = RecordingRunner(
-        [worker_task("record_id", value="one"), worker_task("record_id", value="two")]
+        [
+            worker_task("record_id", value="one"),
+            worker_task("record_id", value="two"),
+            worker_task("output", "done"),
+        ]
     )
     scoped = create_codemode_tool(
         capabilities=(CodeModeCapability(record_id),),
@@ -619,7 +673,7 @@ async def test_scoped_codemode_assigns_unique_nested_call_ids() -> None:
 
     await scoped.execute(
         ToolCallContext(harness=harness, name=scoped.name, id="outer-call"),
-        {"code": "record_id(value='one'); record_id(value='two')"},
+        {"code": "record_id(value='one'); record_id(value='two'); output('done')"},
     )
 
     assert len(call_ids) == 2
